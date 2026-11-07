@@ -26,8 +26,8 @@ flowchart TD
 
 ## 2. nftables layout
 
-- DP-001 [P0] All policy lives in one table `table inet ngfw`, replaced atomically
-  (`nft -f` of a file starting with `flush table inet ngfw` / `destroy table`). Other tables
+- DP-001 [P0] All policy lives in one table `table inet cdw`, replaced atomically
+  (`nft -f` of a file starting with `flush table inet cdw` / `destroy table`). Other tables
   (e.g. ones NixOS creates for containers) are left untouched; `networking.firewall` (the stock
   NixOS firewall) MUST be disabled by the module, with an assertion if the user re-enables it.
 - DP-002 [P0] Chains: `prerouting` (dstnat, antispoof), `input`, `forward`, `output`,
@@ -41,7 +41,7 @@ flowchart TD
   `_antispoof`), configurable per zone (`zones.<z>.antiSpoof = true` default, `false` for
   asymmetric-routing zones).
 - DP-006 [P0] Policy-independent bootstrap (loopback, ICMPv6 essentials, the table skeleton)
-  MAY be hand-written in the module; everything else comes from `ngfw-compile` (ARCH-021).
+  MAY be hand-written in the module; everything else comes from `cdw-compile` (ARCH-021).
 
 ## 3. Marks
 
@@ -75,7 +75,8 @@ Packet mark (`meta mark`) bits 0–1 are reserved for Suricata NFQ `repeat-mark`
   configurable per protocol.
 - DP-021 [P0] A software flowtable `ft` (with `counter`) covers all zone interfaces. Flows are
   offloaded when established **and** (not `INSPECT` **or** `BYPASSED`). Hardware offload
-  (`flags offload`) is opt-in per NIC.
+  (`flags offload`) is opt-in per NIC, and is only tested on NICs that support it (not the I226
+  baseline, D-25).
 - DP-022 [P0] Because offloaded packets skip rule chains, the per-rule `counter` counts *flows*
   (first packets), while per-rule byte/packet volume comes from conntrack accounting via
   flow-end logs (04 §3). Dashboards MUST label these accordingly.
@@ -83,12 +84,15 @@ Packet mark (`meta mark`) bits 0–1 are reserved for Suricata NFQ `repeat-mark`
   via `limit` / meters.
 - DP-024 [P1] SYN-flood protection via `synproxy` for published services (`rules.<id>.synproxy = true`).
 
-Performance targets on the reference hardware (D-9: x86-64, 4 cores, 8 GB; NIC TBD).
+Performance targets on the reference hardware (D-9: x86-64, 4 cores, 8 GB; D-25: Intel I226
+2.5 GbE baseline). All targets pass or fail on the baseline NIC; the 10 GbE profile
+(D-25) is measured and published when hardware is available, but a miss there does not block a
+release.
 Core layout: cores 0–1 kernel networking (softirq) + telemetry, cores 2–3 Suricata workers.
 
 | ID | Metric | Target |
 |----|--------|--------|
-| PERF-1 | L3/L4 forwarding, 1500B, software flowtable offload | ≥ 9 Gbps on 10 GbE (≥ 2.35 Gbps on 2.5 GbE) |
+| PERF-1 | L3/L4 forwarding, 1500B, software flowtable offload | Baseline: ≥ 2.35 Gbps on 2.5 GbE (line rate). 10 GbE profile: ≥ 9 Gbps |
 | PERF-2 | New connections/s, non-inspected | ≥ 20 000 cps |
 | PERF-3 | Concurrent flows | ≥ 500 000 |
 | PERF-4 | IPS-inspected throughput (ET Open, 2 worker cores, IMIX) | ≥ 750 Mbps |
@@ -107,8 +111,8 @@ Core layout: cores 0–1 kernel networking (softirq) + telemetry, cores 2–3 Su
   one per Suricata worker, `num 0-<n-1>`) **without** `bypass` (D-10, fail-closed).
 - DP-036a [P0] Fail-closed scope: only packets of flows selected for inspection are dropped while
   Suricata is unavailable or its queues overflow; all other traffic keeps flowing. Drops are
-  counted (`ngfw_nfqueue_dropped_total{reason="no_listener"|"overflow"}`) and raise
-  `NGFWIPSDown` / `NGFWQueueDrops`.
+  counted (`cdw_nfqueue_dropped_total{reason="no_listener"|"overflow"}`) and raise
+  `CDWIPSDown` / `CDWQueueDrops`.
 - DP-036b [P1] `ips.failOpen = true` MAY be offered as an explicit per-site override with a
   build warning; it is not the default.
 - DP-031 [P0] Only flows matching rules with `inspect = "ips"` or app conditions are queued.
@@ -127,9 +131,11 @@ Core layout: cores 0–1 kernel networking (softirq) + telemetry, cores 2–3 Su
   traffic: the module MUST prefer live reload, and `deploy` MUST print a warning listing the
   inspected rules affected when a change requires a restart.
 - DP-036 [P1] Per-rule `inspect = "ids"` (alert-only for that rule's traffic even in prevent
-  mode). Mechanism TBD: Suricata cannot see nft marks, so this needs either a second
-  Suricata instance on a separate queue range, or compiler-generated address/port predicates
-  scoping drop rules. OPEN-7.
+  mode). Suricata cannot see nft marks, so the mechanism is chosen after the M3 spike (D-21):
+  - preferred: compiler-generated address/port predicates that scope drop signatures away from
+    `ids` traffic, reusing the disjoint-rule compilation proven for App-ID (DP-044);
+  - otherwise: a second Suricata instance in detect mode on a separate queue range, supported
+    only where the memory budget allows it (larger hardware, or `remote` monitoring mode).
 
 
 ## 6. Application identification
@@ -137,7 +143,7 @@ Core layout: cores 0–1 kernel networking (softirq) + telemetry, cores 2–3 Su
 The hard part: rules are first-match by priority, but an app condition is only known after
 several packets, and only Suricata knows it.
 
-**Semantics** (normative, implemented by `ngfw-eval`): the verdict is a function
+**Semantics** (normative, implemented by `cdw-eval`): the verdict is a function
 `verdict(flow5tuple, zones, app)` = action of the first rule in `(priority, id)` order whose
 L3/L4 predicate matches **and** whose app predicate (if any) contains `app`. `app` may be
 `unknown` (not detected within `appId.detectionTimeout`, default 10 packets in each direction
@@ -157,7 +163,7 @@ or 4 KiB).
    fixed action ordering (`pass` > `drop` > …) cannot change the outcome.
    - DP-040 [P0] Allowed outcomes emit `pass` (then bypass for offload); denied outcomes emit
      `drop` (or `reject`). Each generated Suricata rule has a SID in the rule's `sid_range`
-     and `metadata: ngfw_rule <id>` so eve.json events attribute to the deciding rule.
+     and `metadata: cdw_rule <id>` so eve.json events attribute to the deciding rule.
    - DP-041 [P0] The `unknown`-app outcome is a generated rule on `flow` timeout /
      `app-layer-protocol:failed` per candidate's `onUnknownApp`.
 4. Until detection, packets of APP_PENDING flows are accepted (POL-031).
@@ -165,7 +171,7 @@ or 4 KiB).
 - DP-042 [P0] The app catalog maps each app to Suricata predicates (app-layer protocol,
   `tls.sni`, `quic.sni`, `http.host`, `ja3.hash`/`ja4.hash`, `dns.query`). Catalog entries
   are data in `nix/catalogs/apps.nix`, extendable by users.
-- DP-043 [P0] Conformance (09 §3) MUST demonstrate nft+Suricata produce the `ngfw-eval` verdict
+- DP-043 [P0] Conformance (09 §3) MUST demonstrate nft+Suricata produce the `cdw-eval` verdict
   for generated (flow, app) samples, including overlapping and fallback cases.
 - DP-044 [P0] This mechanism is the highest-risk item; milestone M3 begins with a design spike
   that confirms the Suricata keyword support and the disjoint-rule compilation on the pinned
@@ -199,10 +205,10 @@ OPEN-9.
   mirror commit (D-12)
   (fixed-output derivation with hash). MaxMind GeoLite2 supported as an alternative input when
   the user supplies it.
-- DP-061 [P0] `ngfw-compile` extracts CIDRs **only for referenced countries** and emits interval
+- DP-061 [P0] `cdw-compile` extracts CIDRs **only for referenced countries** and emits interval
   sets `geo_<CC>_v4/_v6`. Attribution notice ships in the visualizer footer.
 - DP-062 [P0] The IR records the DB version/date; the exporter exposes
-  `ngfw_feed_age_seconds{feed="geoip"}`; an alert fires above 60 days.
+  `cdw_feed_age_seconds{feed="geoip"}`; an alert fires above 60 days.
 - DP-063 [P1] Runtime refresh (07 §5) updates only set elements via `nft -f` of a set-flush+add
   file, never the ruleset.
 
@@ -213,5 +219,8 @@ OPEN-9.
 - DP-071 [P0] Allow rules with `log = "flow"` set `LOG_FLOW`; ulogd2's NFCT input with a
   ct-mark filter emits NEW and DESTROY events (DESTROY carries bytes/packets both directions).
 - DP-072 [P0] `log = "sampled"`: flow logging for 1 in `sampleRate` new flows (nft `numgen random`).
+- DP-074 [P0] Deny-log sampling (POL-045) is applied after the rule's named counter and before the
+  `log` statement (`numgen random mod <rate> == 0`), so `cdw_rule_hits_total` remains exact.
+  Sampled records carry `sample_rate` (04 §3).
 - DP-073 [P0] Logging MUST never block forwarding: NFLOG group queue thresholds set, ulogd2
-  overflow counted and exported (`ngfw_log_dropped_total`).
+  overflow counted and exported (`cdw_log_dropped_total`).

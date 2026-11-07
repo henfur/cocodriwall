@@ -5,7 +5,7 @@
 | Signal | Producer | Transport | Store | Purpose |
 |--------|----------|-----------|-------|---------|
 | Host & interface metrics | node_exporter | scrape | Prometheus | Throughput, pps, errors, CPU, memory, disk |
-| Firewall metrics | `ngfw-exporter` | scrape | Prometheus | Per-rule hits, conntrack, sets, queues, policy info, feed age |
+| Firewall metrics | `cdw-exporter` | scrape | Prometheus | Per-rule hits, conntrack, sets, queues, policy info, feed age |
 | Suricata stats | Suricata eve `stats` | Vector → `prometheus_exporter` sink | Prometheus | Capture/decoder/flow/app-layer counters, kernel drops |
 | Decision logs | nft `log group` → ulogd2 (NFLOG) | Vector | Loki | Every deny/reject (rate-limited) |
 | Flow logs | conntrack events → ulogd2 (NFCT) | Vector | Loki | Allowed flows (start/end, bytes, duration) |
@@ -13,30 +13,30 @@
 | App events | Suricata eve `flow`, `tls`, `quic` | Vector | Loki | Detected app / SNI per flow |
 | DNS logs | dnsmasq query log | Vector | Loki | Queries, blocks, FQDN-rule troubleshooting (11 §4) |
 | DHCP logs | dnsmasq DHCP log | Vector | Loki | Lease events (11 §4) |
-| DNS/DHCP metrics | dnsmasq + Unbound exporters, `ngfw-exporter` | scrape | Prometheus | Cache, DNSSEC, upstream, pool usage (11 §4) |
-| Change events | `ngfw-activate` hook | Vector | Loki | Policy applied / rolled back → Grafana annotations |
+| DNS/DHCP metrics | dnsmasq + Unbound exporters, `cdw-exporter` | scrape | Prometheus | Cache, DNSSEC, upstream, pool usage (11 §4) |
+| Change events | `cdw-activate` hook | Vector | Loki | Policy applied / rolled back → Grafana annotations |
 | System journal | journald | Vector | Loki | Service failures |
 
 - OBS-001 [P0] All timestamps UTC, RFC 3339 with milliseconds. chrony MUST be enabled.
-- OBS-002 [P0] Every log record and every `ngfw_*` metric carries `firewall` (= `siteName`, or
+- OBS-002 [P0] Every log record and every `cdw_*` metric carries `firewall` (= `siteName`, or
   hostname if unset).
 
-## 2. `ngfw-exporter` metrics
+## 2. `cdw-exporter` metrics
 
 | Metric | Type | Labels | Source |
 |--------|------|--------|--------|
-| `ngfw_rule_hits_total` | counter | `rule, action, from_zone, to_zone` | nft named counters (packets = new flows, DP-022) |
-| `ngfw_rule_last_hit_timestamp_seconds` | gauge | `rule` | exporter-tracked delta |
-| `ngfw_rule_info` | gauge=1 | `rule, priority, action, inspect, owner, system, enabled, expires` | IR |
-| `ngfw_policy_info` | gauge=1 | `policy_hash, generation, git_rev, schema_version` | IR + system profile |
-| `ngfw_set_elements` | gauge | `set, kind (object/fqdn/geo)` | `nft -j list sets` |
-| `ngfw_conntrack_entries`, `ngfw_conntrack_max` | gauge | — | `/proc/sys/net/netfilter` |
-| `ngfw_conntrack_events_total` | counter | `type (insert_failed, drop, early_drop, …)` | conntrack stats (netlink) |
-| `ngfw_nfqueue_packets_total`, `ngfw_nfqueue_dropped_total` | counter | `queue, reason (kernel, user)` | `/proc/net/netfilter/nfnetlink_queue` |
-| `ngfw_log_dropped_total` | counter | `source (nflog, nfct)` | ulogd2 stats |
-| `ngfw_feed_age_seconds`, `ngfw_feed_info` | gauge | `feed, version` | IR |
-| `ngfw_confirm_pending` | gauge | — | commit-confirm state (07 §3) |
-| `ngfw_offloaded_flows` | gauge | — | [P1] sampled conntrack `OFFLOAD` count |
+| `cdw_rule_hits_total` | counter | `rule, action, from_zone, to_zone` | nft named counters (packets = new flows, DP-022) |
+| `cdw_rule_last_hit_timestamp_seconds` | gauge | `rule` | exporter-tracked delta |
+| `cdw_rule_info` | gauge=1 | `rule, priority, action, inspect, owner, system, enabled, expires` | IR |
+| `cdw_policy_info` | gauge=1 | `policy_hash, generation, git_rev, schema_version` | IR + system profile |
+| `cdw_set_elements` | gauge | `set, kind (object/fqdn/geo)` | `nft -j list sets` |
+| `cdw_conntrack_entries`, `cdw_conntrack_max` | gauge | — | `/proc/sys/net/netfilter` |
+| `cdw_conntrack_events_total` | counter | `type (insert_failed, drop, early_drop, …)` | conntrack stats (netlink) |
+| `cdw_nfqueue_packets_total`, `cdw_nfqueue_dropped_total` | counter | `queue, reason (kernel, user)` | `/proc/net/netfilter/nfnetlink_queue` |
+| `cdw_log_dropped_total` | counter | `source (nflog, nfct)` | ulogd2 stats |
+| `cdw_feed_age_seconds`, `cdw_feed_info` | gauge | `feed, version` | IR |
+| `cdw_confirm_pending` | gauge | — | commit-confirm state (07 §3) |
+| `cdw_offloaded_flows` | gauge | — | [P1] sampled conntrack `OFFLOAD` count |
 
 - OBS-010 [P0] Scrape cost: the exporter MUST answer in < 500 ms with 5 000 rules and MUST NOT
   dump the conntrack table on scrape.
@@ -67,12 +67,13 @@ All log streams are normalized by Vector to a common JSON schema (ECS-inspired, 
 | `sni`, `fqdn` | str | flow, app, dns | |
 | `bytes_out`, `bytes_in`, `pkts_out`, `pkts_in`, `duration_ms` | int | flow (end) | From conntrack accounting |
 | `flow_event` | enum | flow | `start`, `end` |
+| `sample_rate` | int | decision, flow | `N` when the record is 1 of N (POL-045, `log = "sampled"`); absent when unsampled. Dashboards multiply counts by it. |
 | `community_id` | str | flow, ips, app | Community ID v1 for cross-stream joins |
 | `sig_id`, `sig_rev`, `sig_msg`, `sig_class`, `severity` | | ips | |
 | `generation`, `actor`, `result` | | change | |
 
-- OBS-020 [P0] The schema is versioned (`schema = "ngfw.log/1"`) and documented as JSON Schema in
-  `crates/ngfw-ir`; Vector transforms are unit-tested against fixtures (Vector `tests` blocks).
+- OBS-020 [P0] The schema is versioned (`schema = "cdw.log/1"`) and documented as JSON Schema in
+  `crates/cdw-ir`; Vector transforms are unit-tested against fixtures (Vector `tests` blocks).
 - OBS-021 [P0] `rule_id` resolution uses the `rule-map.json` of the **generation recorded in the
   ct mark's tag**; since tags are ID-hashed (DP-010), flows outliving a policy change still
   resolve correctly unless the rule was deleted, in which case `rule_id = "<deleted:tag>"`.
@@ -95,9 +96,9 @@ All log streams are normalized by Vector to a common JSON schema (ECS-inspired, 
 ## 4. Derived metrics
 
 - OBS-030 [P0] Loki ruler recording rules (remote-written to Prometheus) produce low-cardinality
-  aggregates from logs: `ngfw:zone_pair_bytes:rate5m{from_zone,to_zone}`,
-  `ngfw:app_bytes:rate5m{app}` (top 50 apps only, rest `other`),
-  `ngfw:denies:rate5m{rule}`, `ngfw:ips_alerts:rate5m{severity}`.
+  aggregates from logs: `cdw:zone_pair_bytes:rate5m{from_zone,to_zone}`,
+  `cdw:app_bytes:rate5m{app}` (top 50 apps only, rest `other`),
+  `cdw:denies:rate5m{rule}`, `cdw:ips_alerts:rate5m{severity}`.
 - OBS-031 [P0] Top-talker / top-destination / top-country / top-FQDN views are LogQL `topk`
   queries over Loki at dashboard time, never Prometheus series.
 

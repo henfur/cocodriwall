@@ -8,11 +8,11 @@ no backend, makes no write requests, and any "edit" is done in Git.
 | File | Origin | Content |
 |------|--------|---------|
 | `policy.json` | IR (02 §10) | Zones, objects, services, apps, rules, NAT, system rules, source locations |
-| `rule-map.json` | `ngfw-compile` | Rule ID ↔ tag ↔ SID range |
-| `analysis.json` | `ngfw-compile` | Shadowed/redundant/broad findings, port-forward coverage |
+| `rule-map.json` | `cdw-compile` | Rule ID ↔ tag ↔ SID range |
+| `analysis.json` | `cdw-compile` | Shadowed/redundant/broad findings, port-forward coverage |
 | `routes.json` | module | Connected networks + static routes per zone (§4.3) |
-| `geo/*.bin` | `ngfw-compile` | Compact prefix sets for referenced countries only (for the tracer) |
-| `ngfw_eval.wasm` | `crates/ngfw-eval` | Evaluator (principle 2) |
+| `geo/*.bin` | `cdw-compile` | Compact prefix sets for referenced countries only (for the tracer) |
+| `cdw_eval.wasm` | `crates/cdw-eval` | Evaluator (principle 2) |
 | `live/<firewall>.json` | runtime, optional [P1] | Per-rule hit counts & last-hit (§5) |
 
 - VIZ-001 [P0] The site is a Nix derivation (`packages.visualizer` + data) with no network
@@ -83,7 +83,7 @@ Output:
    o_dmz_hosts"), the match, and SNAT applied.
 3. Highlighted path on the flow graph.
 
-- VIZ-030 [P0] The tracer calls `ngfw_eval.wasm`; it MUST NOT reimplement matching in TypeScript.
+- VIZ-030 [P0] The tracer calls `cdw_eval.wasm`; it MUST NOT reimplement matching in TypeScript.
 - VIZ-031 [P0] If the destination is a FQDN, the tracer evaluates against FQDN *objects*
   (does the name fall under `fqdn:github`?) and explains that runtime resolution decides the
   actual IP match. If the destination is an IP, FQDN-based rules are reported as
@@ -119,7 +119,7 @@ uncovered port forwards, equal-priority overlaps, expiring rules).
 ## 5. Live data (P1)
 
 - VIZ-050 [P1] A systemd timer on the monitor host queries Prometheus every 60 s for
-  `ngfw_rule_hits_total` rates and `ngfw_rule_last_hit_timestamp_seconds` and writes
+  `cdw_rule_hits_total` rates and `cdw_rule_last_hit_timestamp_seconds` and writes
   `live/<firewall>.json`. The SPA polls it. No API proxy is exposed to the browser.
 
 ## 6. Hosting and integration

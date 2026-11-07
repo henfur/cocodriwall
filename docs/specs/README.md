@@ -1,7 +1,8 @@
-# NixNGFW — Specifications
+# cocodriwall — Specifications
 
 > Status: **DRAFT v0.4** (2026-10-13). No implementation starts until these are approved.
-> Working name "NixNGFW" and the module namespace `services.ngfw` are placeholders.
+> Project name: **cocodriwall**. Technical prefix: `cdw` (`services.cdw`, `cdw-*` tools and crates,
+> `cdw_*` metrics, `CDW*` alerts) (D-24). License: MIT (D-26).
 
 ## Documents
 

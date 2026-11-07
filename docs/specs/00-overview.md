@@ -69,7 +69,7 @@ stock NixOS options MUST be assignable to zones like any other interface.
 | D-4 | Target: SMB/branch, 1–10 Gbps, many VLANs. (HA: see D-15.) | 2026-10-13 | User decision |
 | D-5 | Rules are an attribute set keyed by ID with explicit numeric `priority`, not an ordered list. | proposed | Nix list merge order across modules is not a sane ordering mechanism. See 02 §6. |
 | D-6 | Compiler / analyzer / evaluator written in Rust; evaluator compiled to WASM for the visualizer. | 2026-10-13 | User decision (was OPEN-1). See 01 §4. |
-| D-7 | Log pipeline uses Vector (not Alloy/Promtail). | proposed | VRL transforms + GeoIP enrichment + disk buffers. OPEN-5. |
+| D-7 | Log pipeline uses Vector (not Alloy/Promtail). | 2026-11-07 | User decision (was OPEN-5). VRL transforms + GeoIP enrichment + disk buffers. |
 | D-8 | Threat/Geo feeds pinned as flake inputs by default; runtime refresh is opt-in. | proposed | Preserves G-3. |
 | D-13 | DNS & DHCP in scope: local records from Nix, caching resolver, DNS filtering, DHCP with automatic name registration. Split-horizon views not in scope. | 2026-10-13 | User decision. See 11. |
 | D-14 | DNS architecture: dnsmasq front (DNS instances per filter profile + one DHCP instance) with a loopback-only Unbound backend. | 2026-10-15 | User decision (was OPEN-15). See 11 §1. |
@@ -77,8 +77,16 @@ stock NixOS options MUST be assignable to zones like any other interface.
 | D-16 | Per-zone DNS filter profiles are mandatory in v1 (P0). | 2026-10-15 | User decision (was OPEN-16). See 11 §2.3–2.4. |
 | D-17 | DHCPv6 prefix delegation and DHCP-learned WAN addresses are in v1 (P0). | 2026-10-15 | User decision (was OPEN-18). See 11 §3.4. |
 | D-18 | No DNS blocklist is enabled by default. | 2026-10-15 | User decision (was OPEN-19). |
+| D-19 | App-ID v1 uses the Suricata-native catalog (app-layer protocol, SNI, HTTP Host, JA3/JA4). An nDPI-based extended catalog is a future improvement (P1). | 2026-11-07 | User decision (was OPEN-2). See 02 §5. |
+| D-20 | Remote telemetry transport is plain HTTP by default; the module exposes Loki's auth mechanisms (tenant, basic/bearer, mTLS) but manages no tunnel. Encryption is strongly recommended and left to the infrastructure (WireGuard, Tailscale, trusted mgmt network). | 2026-11-07 | User decision (was OPEN-6). See 01 §3.2. |
+| D-21 | Per-rule `inspect = "ids"` stays P1. Its mechanism is decided after the M3 spike: compiler-scoped drop signatures if the App-ID rule compilation (DP-044) proves robust, otherwise a second Suricata instance on larger hardware only. | 2026-11-07 | User decision (was OPEN-7). See 03 §5. |
+| D-22 | `_default-deny` logs from WAN zones are sampled 1 in 10 by default; counters stay exact. | 2026-11-07 | User decision (was OPEN-11). See 02 §6. |
+| D-23 | D3 gets a Grafana-native rules table panel from `cdw_rule_info`, linked to the visualizer. | 2026-11-07 | User decision (was OPEN-12). See 05 §2. |
+| D-24 | Project name is **cocodriwall**; the technical prefix is `cdw` (options `services.cdw`, crates and tools `cdw-*`, metrics `cdw_*`, alerts `CDW*`, nft table `inet cdw`). | 2026-11-07 | User decision (was OPEN-13). |
+| D-25 | Reference NIC: Intel I226 (2.5 GbE) is the baseline; PERF targets pass or fail on it. A 10 GbE profile (e.g. Intel X710/E810 or NVIDIA ConnectX) is optional and measured when hardware is available; hardware flowtable offload is only tested on a NIC that supports it. | 2026-11-07 | User decision (was OPEN-4). See 03 §4. |
+| D-26 | The project is licensed under MIT. Feed contents keep their upstream licenses (recorded in the mirror's `LICENSES/`). The project publishes no public feed mirror; each operator runs a private one from the shipped tooling, and it is the only supported feed path. | 2026-11-07 | User decision (was OPEN-14). See 07 §5.1. |
 | D-12 | Feeds are delivered through an append-only feed mirror Git repo, pinned by commit; no binary cache required. | 2026-10-13 | User decision (was OPEN-3). See 07 §5. |
-| D-9 | Reference hardware: x86-64, 4 CPU cores, 8 GB RAM. | 2026-10-13 | User decision (was OPEN-4). NIC model still TBD. Implies IPS inspection is **selective** (only `inspect = "ips"` / app rules), not line-rate for all traffic. |
+| D-9 | Reference hardware: x86-64, 4 CPU cores, 8 GB RAM. | 2026-10-13 | User decision (was OPEN-4). NIC: see D-25. Implies IPS inspection is **selective** (only `inspect = "ips"` / app rules), not line-rate for all traffic. |
 | D-10 | IPS fails **closed**: traffic selected for inspection is blocked when Suricata is unavailable. | 2026-10-13 | User decision (was OPEN-8). Non-inspected traffic is unaffected. |
 | D-11 | Authentication to Grafana and the visualizer is OIDC only; no local user accounts. | 2026-10-13 | User decision (was OPEN-10). Break-glass access: 08 §4. |
 

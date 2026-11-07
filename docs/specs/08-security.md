@@ -17,7 +17,7 @@
 | Log flood / NFLOG DoS | Per-rule log rate limits (DP-070), priority buffering (OBS-040). |
 | Malicious traffic exploiting Suricata/parsers | Suricata runs unprivileged with minimal capabilities (CAP_NET_ADMIN only), systemd sandboxing; crashing Suricata blocks inspected traffic rather than bypassing inspection (D-10). |
 | Lockout by bad policy | Commit-confirm auto-rollback (07 §3), `_mgmt-*` rules always present. |
-| Telemetry interception (remote mode) | WireGuard/mTLS (ARCH-012). |
+| Telemetry interception or injection (remote mode) | Encryption by the infrastructure (WireGuard, Tailscale) or mTLS; Loki/exporter authentication; build warning on unprotected transport (ARCH-012, ARCH-015..017). |
 | DNS bypass of FQDN rules or filtering | `dns.enforce` (DP-053, DNS-062). |
 | Firewall used as an open resolver / DHCP served to the WAN | No DNS/DHCP listeners on WAN zones (DNS-001, DHCP-003). |
 | Client picks a DHCP hostname to gain access | Dynamic names can't be referenced by policy (DHCP-021). |
@@ -56,7 +56,7 @@ everyone out of the dashboards exactly when they are needed most.
 - SEC-010 [P0] Break-glass path: the provisioning admin account (DSH-020) is reachable **only**
   on loopback (Grafana listens on `127.0.0.1`; nginx never forwards login-form requests). An
   operator with SSH access via the management zone uses `ssh -L` to log in as admin. Every
-  admin login emits a `stream="change"` event and the `NGFWBreakGlassLogin` alert.
+  admin login emits a `stream="change"` event and the `CDWBreakGlassLogin` alert.
 - SEC-011 [P0] The visualizer is also reachable through the same SSH tunnel on a loopback-only
   nginx vhost without OIDC.
 - SEC-012 [P0] The OIDC issuer, client ID and allowed groups are declared in Nix; the client

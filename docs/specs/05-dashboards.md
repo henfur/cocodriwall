@@ -3,7 +3,7 @@
 ## 1. Provisioning
 
 - DSH-001 [P0] Grafana is configured entirely by the NixOS module: datasources (Prometheus,
-  Loki, with fixed UIDs `ngfw-prom`, `ngfw-loki`), dashboards, folders, alert rules, contact
+  Loki, with fixed UIDs `cdw-prom`, `cdw-loki`), dashboards, folders, alert rules, contact
   points, notification policies, users/teams (or OIDC role mapping).
 - DSH-002 [P0] Dashboard provider: `allowUiUpdates = false`, `disableDeletion = true`; every
   dashboard JSON has `editable = false`. UI changes cannot be saved.
@@ -34,7 +34,7 @@
 - Annotations: policy changes, rollbacks.
 
 ### D2 — Traffic
-- Zone-pair matrix (heatmap-style table) of bytes/s from `ngfw:zone_pair_bytes:rate5m`.
+- Zone-pair matrix (heatmap-style table) of bytes/s from `cdw:zone_pair_bytes:rate5m`.
 - Throughput, pps, errors/drops per interface.
 - Top talkers (src IP), top destinations (dst IP / FQDN / SNI), top destination countries
   (geomap panel), top apps — all LogQL `topk` over `stream="flow"`.
@@ -44,15 +44,20 @@
 ### D3 — Policy decisions
 - Allows vs denies over time, by zone pair.
 - Per-rule hit rate (top N), **filterable by action**.
-- "Unused rules": rules with `ngfw_rule_last_hit_timestamp_seconds` older than `$unused_days`
-  (default 30) or never hit, joined with `ngfw_rule_info` (owner, expires).
-- Rules expiring within 30 days (from `ngfw_rule_info{expires}`).
+- "Unused rules": rules with `cdw_rule_last_hit_timestamp_seconds` older than `$unused_days`
+  (default 30) or never hit, joined with `cdw_rule_info` (owner, expires).
+- Rules expiring within 30 days (from `cdw_rule_info{expires}`).
 - Deny log table (live tail): ts, rule_id, zones, src → dst:port, proto, geo; click-through to
   flow explorer filtered by src/dst.
-- `_default-deny` hits by zone pair (signals missing rules).
+- `_default-deny` hits by zone pair (signals missing rules), from counters (exact), not from the
+  sampled WAN deny logs (POL-045).
+- Rules table (D-23): every rule from `cdw_rule_info` (priority, ID, action, inspect, owner,
+  enabled, expires, system) joined with hit rate and last hit, sortable and filterable. Each row
+  links to D4 and to the visualizer. It complements the visualizer for quick checks inside
+  Grafana; resolved objects, the flow graph and the path tracer stay in the visualizer.
 
 ### D4 — Rule detail (variable `rule`)
-- Rule metadata panel (from `ngfw_rule_info` + link to visualizer, showing description/owner/ticket).
+- Rule metadata panel (from `cdw_rule_info` + link to visualizer, showing description/owner/ticket).
 - Hits/s, last hit, cumulative hits since generation.
 - Bytes attributed (from flow logs), top sources, top destinations, top apps for this rule.
 - Recent matching log lines.
@@ -65,7 +70,7 @@
 - Alerts and drops over time by severity; top signatures; top attacking sources (with geo);
   top targeted internal hosts; signature classtype breakdown.
 - Table of recent alerts with signature message, action taken (alert/drop), rule_id
-  (ngfw rule that sent the flow to inspection).
+  (firewall rule that sent the flow to inspection).
 - Suricata health: kernel/queue drops, capture rate, memcap hits.
 
 ### D7 — Applications
@@ -95,19 +100,19 @@ Specified in 11 §4.1.
 
 | Alert | Condition | Severity |
 |-------|-----------|----------|
-| `NGFWExporterDown` | exporter target down 2 m | critical |
-| `NGFWConntrackNearFull` | entries / max > 85% for 5 m | warning (>95%: critical) |
-| `NGFWConntrackInsertFailed` | increase > 0 over 5 m | warning |
-| `NGFWIPSDown` | Suricata not running / no stats 1 m (inspected traffic is being blocked, D-10) | critical |
-| `NGFWQueueDrops` | NFQUEUE drops > 0.1% of queued | warning |
-| `NGFWLogPipelineLag` | ingestion lag > 2 m or buffer > 80% | warning |
-| `NGFWFeedStale` | geo feed > 60 d, signatures > 14 d | warning |
-| `NGFWConfirmPending` | commit-confirm pending (auto-rollback imminent) | info |
-| `NGFWRolledBack` | auto-rollback happened | critical |
-| `NGFWBreakGlassLogin` | admin login via loopback (SEC-010) | warning |
+| `CDWExporterDown` | exporter target down 2 m | critical |
+| `CDWConntrackNearFull` | entries / max > 85% for 5 m | warning (>95%: critical) |
+| `CDWConntrackInsertFailed` | increase > 0 over 5 m | warning |
+| `CDWIPSDown` | Suricata not running / no stats 1 m (inspected traffic is being blocked, D-10) | critical |
+| `CDWQueueDrops` | NFQUEUE drops > 0.1% of queued | warning |
+| `CDWLogPipelineLag` | ingestion lag > 2 m or buffer > 80% | warning |
+| `CDWFeedStale` | geo feed > 60 d, signatures > 14 d | warning |
+| `CDWConfirmPending` | commit-confirm pending (auto-rollback imminent) | info |
+| `CDWRolledBack` | auto-rollback happened | critical |
+| `CDWBreakGlassLogin` | admin login via loopback (SEC-010) | warning |
 | DNS & DHCP alerts | see 11 §4.2 | — |
-| `NGFWDenySpike` | denies/s > 5× 1-day baseline | warning |
-| `NGFWIPSHighSeverity` | any severity-1 alert | warning |
+| `CDWDenySpike` | denies/s > 5× 1-day baseline | warning |
+| `CDWIPSHighSeverity` | any severity-1 alert | warning |
 
 - DSH-030 [P0] Contact points are declared in Nix (email, webhook, Slack/Matrix via webhook);
   secrets via the secrets mechanism (07 §6).

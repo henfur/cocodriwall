@@ -19,7 +19,7 @@ sequenceDiagram
 
 - OPS-001 [P0] `nix flake check` MUST run all evaluation checks, compiler analysis, `nft -c`,
   dashboard compilation, visualizer build and the fast VM test subset (09).
-- OPS-002 [P0] Production mode (`services.ngfw.production = true`) refuses to build from a dirty
+- OPS-002 [P0] Production mode (`services.cdw.production = true`) refuses to build from a dirty
   tree (`self.rev` absent) and implies `strict = true`.
 
 ## 2. Deployment
@@ -36,18 +36,18 @@ sequenceDiagram
 
 ## 3. Commit-confirm and rollback
 
-- OPS-020 [P0] After a switch triggered by `deploy`, `ngfw-confirm.timer` (default 120 s,
-  `operations.confirmTimeout`) starts. If `ngfw-confirm` is not invoked in time, the host
-  activates the previous system generation and emits `NGFWRolledBack`.
+- OPS-020 [P0] After a switch triggered by `deploy`, `cdw-confirm.timer` (default 120 s,
+  `operations.confirmTimeout`) starts. If `cdw-confirm` is not invoked in time, the host
+  activates the previous system generation and emits `CDWRolledBack`.
 - OPS-021 [P0] `nix run .#confirm -- <host>` connects **over the management zone using a new
   connection** (proves management reachability with the new policy, not via the existing SSH
   session that survives due to conntrack).
 - OPS-022 [P0] Rollback restores the full system generation (ruleset, Suricata, dashboards —
   everything), not only nft.
-- OPS-023 [P0] `ngfw-rollback` CLI for console use: lists generations with policy_hash and git
+- OPS-023 [P0] `cdw-rollback` CLI for console use: lists generations with policy_hash and git
   rev and switches to a chosen one.
 - OPS-024 [P0] Local `nixos-rebuild switch` on the box (without `deploy`) also arms the
-  confirm timer unless `--no-confirm` is passed via `NGFW_NO_CONFIRM=1`.
+  confirm timer unless `--no-confirm` is passed via `CDW_NO_CONFIRM=1`.
 
 ## 4. Upgrades
 
@@ -94,17 +94,19 @@ flowchart LR
   history rewrites are forbidden; nothing is ever deleted. GeoIP keeps every month as its own
   directory (old months are still needed by old site commits); ET Open is overwritten in place
   per commit (history holds old versions).
-- OPS-042 [P0] Site flakes consume it as `inputs.feeds = { url = "git+https://…/ngfw-feeds?shallow=1"; flake = false; }`
+- OPS-042 [P0] Site flakes consume it as `inputs.feeds = { url = "git+https://…/cdw-feeds?shallow=1"; flake = false; }`
   (shallow fetch: building a site never downloads the full history). The compiler reads
   `et-open/suricata-<ver>` matching the Suricata version in the pinned nixpkgs, and fails the
   build with a clear message if that version directory is missing.
 - OPS-043 [P0] Each mirror commit is tagged `et-open/<YYYY-MM-DD>` and/or `geoip/<YYYY-MM>` and
   signed by the bot's key. [P1] Site builds verify the pinned commit's signature against
   `feeds.trustedSigners`.
-- OPS-044 [P0] Ownership: the mirror is self-hostable (any Git host), so air-gapped and
-  privacy-sensitive sites can run their own. Whether the project also publishes a shared public
-  mirror depends on the upstream redistribution terms (see OPEN-14); the spec does not
-  assume one.
+- OPS-044 [P0] Ownership (D-26): the project publishes **no** shared public mirror. Every
+  operator runs a private mirror on a Git host of their choice; one mirror MAY serve all of an
+  operator's sites. The project ships what is needed to run one: the `feed-mirror` app, a CI
+  workflow template, and a `templates.feed-mirror` flake template for a new mirror repo. The
+  self-hosted mirror is the only supported feed path; sites do not fetch feeds from upstream
+  directly, because upstream overwrites its files and pinned hashes would stop matching.
 
 ### 5.2 Mirror bot
 
@@ -124,7 +126,7 @@ flowchart LR
   which SIDs become `drop` under `ips.dropPolicy`) and a GeoIP diff (prefix churn for
   referenced countries). Merging and deploying stays a human decision; auto-merge MAY be
   enabled per site for feed-only PRs that pass all checks.
-- OPS-047 [P0] Upstream outages: the bot makes no commit, and the site's `NGFWFeedStale` alert
+- OPS-047 [P0] Upstream outages: the bot makes no commit, and the site's `CDWFeedStale` alert
   (05 §4) fires once the pinned feed passes its age threshold. No fallback source is used
   automatically.
 - OPS-048 [P0] Growth budget: unpacked ET Open text changes produce small daily deltas; GeoIP
@@ -135,14 +137,14 @@ flowchart LR
 ### 5.3 Runtime refresh (opt-in)
 - OPS-049 [P1] Opt-in runtime refresh (`feeds.<name>.runtimeRefresh = { enable; interval; }`):
   a hardened systemd service fetches, validates (signature/checksum, size, parse), and applies
-  **only** signature or set-element updates. Status exported as `ngfw_feed_info{source="runtime"}`.
+  **only** signature or set-element updates. Status exported as `cdw_feed_info{source="runtime"}`.
   This explicitly trades reproducibility (G-3) for freshness and is off by default.
 
 ## 6. Secrets
 
 - OPS-050 [P0] Secrets are never in the Nix store. Supported backends: sops-nix (default) and
   agenix. Secrets: Grafana admin password, user password hashes or OIDC client secret, TLS key,
-  WireGuard telemetry keys, contact-point credentials, optional MaxMind license key.
+  telemetry credentials (Loki basic-auth/bearer tokens, mTLS client and server keys), contact-point credentials, optional MaxMind license key.
 
 ## 7. Resource defaults (local mode, reference: 4 cores / 8 GB, D-9)
 

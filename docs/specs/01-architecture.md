@@ -5,13 +5,13 @@
 ```mermaid
 flowchart LR
   subgraph Repo["Git repo (flake)"]
-    CFG["site config<br/>services.ngfw.*"]
+    CFG["site config<br/>services.cdw.*"]
     PIN["pinned inputs<br/>nixpkgs, ET Open rules, GeoIP DB"]
   end
 
   subgraph Build["nix build (eval + derivations)"]
     MOD["NixOS module<br/>option types + ref checks"] --> IR["policy.json (IR)"]
-    IR --> COMP["ngfw-compile"]
+    IR --> COMP["cdw-compile"]
     COMP --> NFT["nftables ruleset"]
     COMP --> SUR["Suricata rules + config"]
     COMP --> DNSM["dnsmasq + Unbound config<br/>(records, DHCP, blocklists, nftset)"]
@@ -29,7 +29,7 @@ flowchart LR
     S["Suricata (NFQUEUE, IPS)"]
     D["dnsmasq (DNS front, DHCP, filtering, fills FQDN sets)<br/>+ Unbound (cache, DNSSEC, upstream)"]
     U["ulogd2 (NFLOG + NFCT → JSON)"]
-    X["ngfw-exporter + node_exporter + suricata stats"]
+    X["cdw-exporter + node_exporter + suricata stats"]
     V["Vector agent"]
   end
 
@@ -61,15 +61,15 @@ flowchart LR
 
 | Component | Role | Source | Custom? |
 |-----------|------|--------|---------|
-| NixOS module `services.ngfw` | Option types, cross-reference validation, IR emission, wiring of all services | this repo | yes |
-| `ngfw-compile` | IR → nftables, Suricata rules, dnsmasq/Unbound config, compiled blocklists, Geo sets, analysis report | this repo (Rust) | yes |
-| `ngfw-eval` (lib) | Packet/flow → verdict evaluator over IR; shared by compiler tests and visualizer (WASM) | this repo (Rust) | yes |
+| NixOS module `services.cdw` | Option types, cross-reference validation, IR emission, wiring of all services | this repo | yes |
+| `cdw-compile` | IR → nftables, Suricata rules, dnsmasq/Unbound config, compiled blocklists, Geo sets, analysis report | this repo (Rust) | yes |
+| `cdw-eval` (lib) | Packet/flow → verdict evaluator over IR; shared by compiler tests and visualizer (WASM) | this repo (Rust) | yes |
 | nftables | Stateful filtering, NAT, sets, flowtable offload, logging | nixpkgs | no |
 | Suricata | IDS/IPS, application-layer protocol detection, TLS SNI/JA3/JA4 | nixpkgs | no |
 | dnsmasq | Client-facing DNS (local records, filtering, query log), DHCPv4/v6 + RA with name registration; populates nft sets for FQDN objects (11) | nixpkgs | no |
 | Unbound | Loopback-only backend: cache, DNSSEC validation, recursion or DNS-over-TLS forwarding (11) | nixpkgs | no |
 | ulogd2 | Collects NFLOG (per-packet decision logs) and NFCT (flow start/end with counters), emits JSON | nixpkgs | no |
-| `ngfw-exporter` | Prometheus exporter: per-rule counters, set sizes, conntrack, queue stats, policy info | this repo | yes |
+| `cdw-exporter` | Prometheus exporter: per-rule counters, set sizes, conntrack, queue stats, policy info | this repo | yes |
 | node_exporter | Host/interface metrics | nixpkgs | no |
 | Vector | Log shipping, parsing, normalization (§04), enrichment (GeoIP, rule metadata) | nixpkgs | no |
 | Prometheus | Metrics TSDB | nixpkgs | no |
@@ -80,7 +80,7 @@ flowchart LR
 
 ## 3. Topologies
 
-Selected with `services.ngfw.monitoring.mode`:
+Selected with `services.cdw.monitoring.mode`:
 
 ### 3.1 `local` (default)
 
@@ -96,22 +96,36 @@ addresses on interfaces in a zone flagged `management = true`.
 ### 3.2 `remote`
 
 Firewall runs only the collection side (exporters, ulogd2, Vector). A second NixOS host
-imports `nixosModules.ngfw-monitor`.
+imports `nixosModules.cdw-monitor`.
 
 ```mermaid
 flowchart LR
-  FW1["fw-branch-a"] -- "WireGuard or mTLS over mgmt" --> MON["monitor host"]
-  FW2["fw-branch-b"] -- "WireGuard or mTLS over mgmt" --> MON
+  FW1["fw-branch-a"] -- "HTTP(S) over WireGuard / Tailscale / mgmt LAN" --> MON["monitor host"]
+  FW2["fw-branch-b"] -- "HTTP(S) over WireGuard / Tailscale / mgmt LAN" --> MON
 ```
 
 - ARCH-010 [P0] Metrics: the monitor host scrapes the firewall's exporters (pull). Logs:
   Vector on the firewall pushes to Loki (push) with an on-disk buffer.
 - ARCH-011 [P0] The monitor module MUST take a list of firewall NixOS configurations
-  (`services.ngfw-monitor.firewalls = [ self.nixosConfigurations.fw-a ... ]`) and derive
+  (`services.cdw-monitor.firewalls = [ self.nixosConfigurations.fw-a ... ]`) and derive
   scrape targets, Loki tenants/labels and visualizer data from each firewall's IR. No firewall
   details are re-typed on the monitor side.
-- ARCH-012 [P0] All telemetry traffic MUST be encrypted and authenticated (WireGuard tunnel
-  managed by the module, or mTLS; see OPEN-6).
+- ARCH-012 [P0] The module does not manage a tunnel (D-20). Telemetry uses plain HTTP by
+  default; encrypting the path between firewall and monitor host is left to the infrastructure
+  (WireGuard, Tailscale, a trusted management network) and is **strongly recommended**.
+- ARCH-015 [P0] Log push MUST support the authentication mechanisms Loki and Vector's `loki`
+  sink already support: tenant ID (`X-Scope-OrgID`, Loki multi-tenancy), basic auth and bearer
+  token (enforced by the monitor host's nginx in front of Loki), and mTLS (Loki
+  `server.http_tls_config` with `client_auth_type = RequireAndVerifyClientCert`). All of these
+  are exposed as options on both modules; credentials and keys come from secrets (07 §6).
+- ARCH-016 [P0] Metrics scrapes MUST support the same choices on the exporter side: basic auth,
+  TLS and mTLS through the exporters' web configuration (Prometheus exporter-toolkit format;
+  `cdw-exporter` implements the same format), matched by the generated Prometheus scrape config.
+- ARCH-017 [P0] Exporters and Vector's outbound traffic bind to the interface named in
+  `monitoring.remote.via` only (extends SEC-001). The build emits a warning (an error in
+  `strict` mode) unless mTLS is enabled, `via` is a WireGuard or Tailscale interface, `via` is
+  in a `management = true` zone, or `monitoring.remote.plaintextReason` states why plain
+  transport is acceptable.
 - ARCH-013 [P0] Monitor unreachability MUST NOT affect forwarding. Vector buffers to disk up
   to a configurable cap (default 2 GiB), then drops oldest **allow** logs before **deny/IPS**
   logs (priority buffering, see 04 §5).
@@ -123,9 +137,9 @@ flowchart LR
 1. Module evaluation: Nix option types validate shape; module code validates references
    (zones, objects, services, apps exist), uniqueness, and simple invariants (02 §9).
 2. The module serializes the resolved policy to `policy.json` (schema: 02 §10). This is a
-   derivation output and is exposed as `config.services.ngfw.build.ir`.
-3. `ngfw-compile` runs in a derivation over the IR + pinned feeds and produces:
-   `ruleset.nft`, `suricata/ngfw.rules`, `suricata/ngfw.yaml` fragment, `dnsmasq.conf` (records, DHCP, blocklist, nftset), `unbound.conf`,
+   derivation output and is exposed as `config.services.cdw.build.ir`.
+3. `cdw-compile` runs in a derivation over the IR + pinned feeds and produces:
+   `ruleset.nft`, `suricata/cdw.rules`, `suricata/cdw.yaml` fragment, `dnsmasq.conf` (records, DHCP, blocklist, nftset), `unbound.conf`,
    `geo/*.nft`, `rule-map.json` (rule ID ↔ numeric tag ↔ Suricata SID range), `analysis.json`.
 4. `ruleset.nft` is checked with `nft -c` inside the build sandbox (reuse
    `networking.nftables.checkRuleset`).
@@ -133,13 +147,13 @@ flowchart LR
 
 - ARCH-020 [P0] The IR MUST be deterministic: same inputs ⇒ byte-identical `policy.json`.
   `policy_hash` = SHA-256 of the canonical IR and is exported as a metric label
-  (`ngfw_policy_info{policy_hash, generation}`) and stamped on every log line.
-- ARCH-021 [P0] `ngfw-compile` MUST be the only producer of data-plane artifacts. The NixOS
+  (`cdw_policy_info{policy_hash, generation}`) and stamped on every log line.
+- ARCH-021 [P0] `cdw-compile` MUST be the only producer of data-plane artifacts. The NixOS
   module MUST NOT emit nftables rules by string concatenation in Nix (except bootstrap tables
   in 03 §2 that are policy-independent).
 
-- ARCH-022 [P0] `ngfw-ir`, `ngfw-eval`, `ngfw-compile` and `ngfw-exporter` are written in Rust
-  (D-6). `ngfw-eval` MUST build for both the host target and `wasm32-unknown-unknown` from the
+- ARCH-022 [P0] `cdw-ir`, `cdw-eval`, `cdw-compile` and `cdw-exporter` are written in Rust
+  (D-6). `cdw-eval` MUST build for both the host target and `wasm32-unknown-unknown` from the
   same source, with no target-specific matching logic.
 
 ## 5. Repository layout (target)
@@ -148,17 +162,17 @@ flowchart LR
 flake.nix
 nix/
   modules/
-    ngfw/            # services.ngfw.* — options, IR emission, service wiring
-    ngfw-monitor/    # services.ngfw-monitor.* — Prometheus, Loki, Grafana, nginx, visualizer
+    cdw/            # services.cdw.* — options, IR emission, service wiring
+    cdw-monitor/    # services.cdw-monitor.* — Prometheus, Loki, Grafana, nginx, visualizer
   lib/               # helpers exposed as flake lib (object constructors, service catalog)
   catalogs/
     services.nix     # built-in service definitions (ssh, https, dns, ...)
     apps.nix         # built-in App-ID catalog (02 §5)
 crates/
-  ngfw-ir/           # IR types + JSON schema generation
-  ngfw-eval/         # evaluator (native + wasm32)
-  ngfw-compile/      # IR → artifacts, analysis
-  ngfw-exporter/     # Prometheus exporter
+  cdw-ir/           # IR types + JSON schema generation
+  cdw-eval/         # evaluator (native + wasm32)
+  cdw-compile/      # IR → artifacts, analysis
+  cdw-exporter/     # Prometheus exporter
 visualizer/          # TS SPA (built with buildNpmPackage)
 dashboards/          # Grafana dashboard sources (Jsonnet/Grafonnet or JSON) → see 05 §1
 tests/
@@ -169,5 +183,6 @@ examples/
 docs/specs/
 ```
 
-Flake outputs: `nixosModules.{ngfw,ngfw-monitor}`, `packages.<sys>.{ngfw-compile,ngfw-exporter,visualizer}`,
-`lib`, `checks.<sys>.*` (all of 09), `templates.default` (new-site skeleton), `apps.<sys>.{deploy,confirm,policy-diff}`.
+Flake outputs: `nixosModules.{cdw,cdw-monitor}`, `packages.<sys>.{cdw-compile,cdw-exporter,visualizer}`,
+`lib`, `checks.<sys>.*` (all of 09), `templates.default` (new-site skeleton), `templates.feed-mirror` (new feed mirror repo, 07 §5.1),
+`apps.<sys>.{deploy,confirm,policy-diff,feed-mirror}`.

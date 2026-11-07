@@ -5,9 +5,9 @@ This is the most important document: it is the product's entire user interface.
 ## 1. Worked example
 
 ```nix
-{ ngfw, ... }:
+{ cdw, ... }:
 {
-  services.ngfw = {
+  services.cdw = {
     enable = true;
     siteName = "branch-a";
 
@@ -97,7 +97,7 @@ This is the most important document: it is the product's entire user interface.
 - POL-003 [P0] `self` represents the firewall itself (nftables `input`/`output`); rules with
   `to = "self"` control access to firewall services.
 - POL-004 [P0] At least one zone MUST be `management = true` unless
-  `services.ngfw.allowNoManagementZone = true`.
+  `services.cdw.allowNoManagementZone = true`.
 
 ## 3. Address objects
 
@@ -157,9 +157,10 @@ apps.ssh  = { protocol = "ssh"; category = "remote-access"; };
   (default `deny`) after `detectionTimeout` packets/bytes.
 - POL-033 [P1] App categories (`apps = [ "category:p2p" ]`) MAY be referenced.
 
-> OPEN-2: Is the Suricata app-layer + SNI catalog sufficient, or must v1 include nDPI-based
-> detection (Suricata 8 nDPI plugin) for a broader catalog? Recommendation: ship v1 with
-> Suricata-native + SNI catalog (~50 apps), make nDPI a P1 behind an option.
+- POL-034 [P0] The v1 app catalog uses Suricata-native detection only: app-layer protocols,
+  TLS/QUIC SNI, HTTP Host and JA3/JA4 fingerprints (~50 apps) (D-19).
+- POL-035 [P1] An extended catalog based on nDPI (Suricata 8 nDPI plugin) MAY be added later,
+  behind an option. Catalog entries and rule semantics stay the same.
 
 ## 6. Rules
 
@@ -187,9 +188,13 @@ apps.ssh  = { protocol = "ssh"; category = "remote-access"; };
 - POL-042 [P0] Default action after the last rule is deny with ID `_default-deny`, logged with
   `log = "deny"` (rate-limited). Per zone pair overrides are not allowed in v1 (use an explicit
   final rule instead).
+- POL-045 [P0] `_default-deny` decision logs for traffic entering from zones that contain the
+  default route (WAN zones) are sampled 1 in 10 by default (D-22), because internet scan noise
+  would otherwise dominate log volume. `logging.defaultDenySampleRate` (default `10`; `1`
+  disables sampling) controls it. Counters stay exact; only log records are sampled (DP-074).
 - POL-043 [P0] Rules MAY be declared in any number of NixOS modules; attrset merging makes
   duplicate IDs a type error (desired).
-- POL-044 [P1] `services.ngfw.ruleDefaults` MAY set defaults for `log`, `inspect`, `owner`.
+- POL-044 [P1] `services.cdw.ruleDefaults` MAY set defaults for `log`, `inspect`, `owner`.
 
 Why an attrset and not a list (D-5): NixOS merges lists from multiple modules in module-import
 order, which is invisible in review and makes "insert a rule between two others" fragile.
@@ -221,7 +226,7 @@ Explicit priorities make ordering explicit in the diff.
   - `_dhcp4`, `_dhcp6`: allow DHCP to `self` from zones with DHCP enabled (DHCP-004).
   - `_icmpv6-essential`: allow ICMPv6 ND/RA/PMTU types required by RFC 4890.
 - POL-061 [P0] System rules are visible in the IR and visualizer, tagged `system = true`.
-- POL-062 [P0] `_mgmt-*` rules MAY be restricted by `services.ngfw.management.allowedSources`
+- POL-062 [P0] `_mgmt-*` rules MAY be restricted by `services.cdw.management.allowedSources`
   but MUST NOT be disabled while a commit-confirm is pending (07 §3).
 
 ## 9. Validation (build-time)
@@ -246,14 +251,14 @@ Explicit priorities make ordering explicit in the diff.
 | VAL-16 | DNS & DHCP checks: DNS-013, DNS-031, DNS-033, DHCP-003, DHCP-010, DHCP-021 (11) | error |
 
 - POL-070 [P0] Evaluation-time checks (VAL-01..06, 14, 15) are performed in Nix with errors that
-  name the rule ID and option path. Analysis checks (VAL-07..13) run in `ngfw-compile` and fail
+  name the rule ID and option path. Analysis checks (VAL-07..13) run in `cdw-compile` and fail
   the derivation with a human-readable report.
-- POL-071 [P0] `services.ngfw.strict` (default `false`, recommended `true` in production)
+- POL-071 [P0] `services.cdw.strict` (default `false`, recommended `true` in production)
   promotes all warnings to errors.
 
 ## 10. IR (`policy.json`)
 
-- POL-080 [P0] The IR schema is defined as Rust types in `crates/ngfw-ir`, from which a JSON
+- POL-080 [P0] The IR schema is defined as Rust types in `crates/cdw-ir`, from which a JSON
   Schema is generated and committed; the Nix module output is validated against it in `checks`.
 - POL-081 [P0] IR contents: `schema_version`, `site`, `policy_hash`, `generated_from` (git rev
   if available, else `dirty`), zones (with interfaces), fully flattened objects (with
